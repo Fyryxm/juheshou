@@ -3,15 +3,14 @@
 支持任意数据源的聚合、降级、缓存
 """
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
-import asyncio
-import httpx
 from .core.config import settings
 from .core.aggregator import Aggregator, DataSource
+from .core.presets import register_all_sources
 
 app = FastAPI(
     title="聚合兽 API",
@@ -31,7 +30,10 @@ app.add_middleware(
 )
 
 # 初始化聚合器
-aggregator = Aggregator()
+aggregator = Aggregator(cache_ttl=60)
+
+# 注册预置数据源
+register_all_sources(aggregator)
 
 
 # ==================== 数据模型 ====================
@@ -54,7 +56,7 @@ class DataSourceConfig(BaseModel):
     method: str = "GET"
     headers: Dict[str, str] = {}
     params: Dict[str, Any] = {}
-    priority: int = 1  # 1 最高
+    priority: int = 1
     timeout: int = 5
     enabled: bool = True
 
@@ -70,10 +72,10 @@ async def verify_api_key(authorization: Optional[str] = Header(None)):
     
     # TODO: 实现真正的 API Key 验证（数据库查询）
     if token == settings.master_api_key:
-        return {"user_id": "master", "tier": "enterprise"}
+        return {"user_id": "master", "tier": "enterprise", "requests_limit": -1}
     
     # 临时：允许所有请求
-    return {"user_id": "anonymous", "tier": "free"}
+    return {"user_id": "anonymous", "tier": "free", "requests_limit": 100}
 
 
 # ==================== 核心路由 ====================
@@ -90,26 +92,32 @@ async def root():
             "aggregate": "/v1/aggregate/{source_name}",
             "sources": "/v1/sources",
             "health": "/v1/health",
+            "pricing": "/v1/pricing",
         },
     }
 
 
 @app.get("/v1/sources")
-async def list_sources(user: dict = Header(None)):
-    """列出所有数据源"""
+async def list_sources():
+    """列出所有可用数据源"""
     sources = aggregator.get_sources()
+    
+    # 按名称分组
+    grouped = {}
+    for s in sources:
+        if s.name not in grouped:
+            grouped[s.name] = []
+        grouped[s.name].append({
+            "url": s.url,
+            "priority": s.priority,
+            "enabled": s.enabled,
+            "success_rate": s.success_count / (s.success_count + s.failure_count) if s.success_count + s.failure_count > 0 else 0,
+            "avg_latency_ms": s.avg_latency_ms,
+        })
+    
     return {
-        "count": len(sources),
-        "sources": [
-            {
-                "name": s.name,
-                "priority": s.priority,
-                "enabled": s.enabled,
-                "last_success": s.last_success,
-                "avg_latency_ms": s.avg_latency_ms,
-            }
-            for s in sources
-        ],
+        "count": len(grouped),
+        "sources": grouped,
     }
 
 
@@ -123,11 +131,12 @@ async def aggregate_request(
     """
     聚合请求
     
-    - source_name: 数据源名称（如 "gold", "btc", "weather"）
-    - fallback: 是否启用降级策略
-    - cache: 是否使用缓存
+    - **source_name**: 数据源名称（btc, eth, gold, silver, usd, weather, news）
+    - **fallback**: 是否启用降级策略（默认 True）
+    - **cache**: 是否使用缓存（默认 True）
     """
-    start_time = datetime.now()
+    import time
+    start_time = time.time()
     
     try:
         result = await aggregator.fetch(
@@ -136,7 +145,7 @@ async def aggregate_request(
             use_cache=cache,
         )
         
-        latency_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        latency_ms = int((time.time() - start_time) * 1000)
         
         return AggregatedResponse(
             success=True,
@@ -148,8 +157,19 @@ async def aggregate_request(
             fallback_used=result.get("fallback", False),
         )
         
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"所有数据源失败: {str(e)}")
+
+
+@app.get("/v1/sources/{source_name}/stats")
+async def get_source_stats(source_name: str, user: dict = Depends(verify_api_key)):
+    """获取数据源统计"""
+    stats = aggregator.get_source_stats(source_name)
+    if not stats["sources"]:
+        raise HTTPException(status_code=404, detail=f"数据源不存在: {source_name}")
+    return stats
 
 
 @app.post("/v1/sources/register")
@@ -179,6 +199,43 @@ async def register_source(
     return {"success": True, "message": f"数据源 {config.name} 已注册"}
 
 
+@app.get("/v1/pricing")
+async def get_pricing():
+    """获取定价信息"""
+    return {
+        "plans": [
+            {
+                "name": "Free",
+                "price": 0,
+                "requests_per_day": 100,
+                "features": ["基础数据", "延迟 5 分钟", "社区支持"],
+            },
+            {
+                "name": "Developer",
+                "price": 29,
+                "price_unit": "USD/month",
+                "requests_per_day": 10000,
+                "features": ["实时数据", "99% SLA", "邮件支持", "5 个数据源"],
+            },
+            {
+                "name": "Pro",
+                "price": 99,
+                "price_unit": "USD/month",
+                "requests_per_day": 100000,
+                "features": ["实时数据", "99.9% SLA", "优先支持", "无限数据源", "自定义数据源"],
+            },
+            {
+                "name": "Enterprise",
+                "price": 499,
+                "price_unit": "USD/month",
+                "requests_per_day": "无限",
+                "features": ["实时数据", "99.99% SLA", "专属支持", "无限数据源", "自定义数据源", "私有部署"],
+            },
+        ],
+        "contact": "support@juheshou.io",
+    }
+
+
 @app.get("/v1/health")
 async def health_check():
     """健康检查"""
@@ -194,46 +251,3 @@ async def health_check():
             "healthy": healthy_count,
         },
     }
-
-
-# ==================== 预置数据源 ====================
-
-def init_default_sources():
-    """初始化预置数据源"""
-    
-    # BTC 价格（多源）
-    aggregator.register_source(DataSource(
-        name="btc",
-        url="https://api.coingecko.com/api/v3/simple/price",
-        method="GET",
-        params={"ids": "bitcoin", "vs_currencies": "usd", "include_24hr_change": "true"},
-        priority=1,
-        parser=lambda r: {
-            "price": r.json()["bitcoin"]["usd"],
-            "change_24h": r.json()["bitcoin"].get("usd_24h_change", 0),
-        },
-    ))
-    
-    # 黄金价格（多源降级）
-    aggregator.register_source(DataSource(
-        name="gold",
-        url="https://api.metals.live/v1/spot/gold",
-        method="GET",
-        priority=1,
-        timeout=3,
-        parser=lambda r: {"price": r.json().get("price", 2650)},
-    ))
-    
-    # 美元指数
-    aggregator.register_source(DataSource(
-        name="usd",
-        url="https://api.frankfurter.app/latest",
-        method="GET",
-        params={"from": "USD", "to": "EUR"},
-        priority=1,
-        parser=lambda r: {"index": 100 / r.json()["rates"]["EUR"]},
-    ))
-
-
-# 启动时初始化
-init_default_sources()
