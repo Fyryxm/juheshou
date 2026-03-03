@@ -16,6 +16,7 @@
 - 📊 **可信度评分** - 基于成功率、延迟计算可信度
 - 💾 **智能缓存** - 减少请求，提升速度
 - 🔐 **API Key 管理** - 简单的认证系统
+- 🔌 **即插即用** - 添加新数据源只需几行代码
 
 ## 使用场景
 
@@ -28,6 +29,16 @@
 - ❌ 不知道数据来自哪个源，不知道可信度
 
 **聚合兽帮你解决这些问题！**
+
+### 适用场景
+
+- 📊 **市场价格** - 加密货币、股票、期货、贵金属
+- 🌤️ **天气数据** - 多气象站聚合
+- 📰 **新闻资讯** - 多新闻源聚合
+- 📈 **经济指标** - GDP、CPI、失业率
+- 🗺️ **地理数据** - 地图、定位、POI
+- 💬 **社交媒体** - 多平台数据聚合
+- 🔌 **任何 API** - 你需要聚合的任何数据源
 
 ## 快速开始
 
@@ -166,32 +177,45 @@ print(f"黄金：${report['gold_price']}")
 | `/v1/sources/register` | POST | 注册新数据源 (Enterprise) |
 | `/v1/health` | GET | 健康检查 |
 
-## 预置数据源
+## 预置数据源（示例）
+
+**注意**: 以下是示例数据源，你可以替换成任何你需要的 API。
 
 | 名称 | 数据源 | 优先级 | 状态 |
 |------|--------|--------|------|
-| btc | CoinGecko | 1 | ✅ 实时 |
-| eth | CoinGecko | 1 | ✅ 实时 |
-| gold | Metals.live → Fallback | 1→2 | ⚠️ 估算 |
-| silver | Metals.live → Fallback | 1→2 | ⚠️ 估算 |
-| usd | Exchange Rate API | 1 | ✅ 实时 |
+| btc | CoinGecko | 1 | ✅ 示例 |
+| eth | CoinGecko | 1 | ✅ 示例 |
+| gold | Metals.live → Fallback | 1→2 | ⚠️ 示例 |
+| silver | Metals.live → Fallback | 1→2 | ⚠️ 示例 |
+| usd | Exchange Rate API | 1 | ✅ 示例 |
 | weather | OpenWeather | 1 | 🔑 需 Key |
 | news | NewsAPI | 1 | 🔑 需 Key |
 | fred_gdp | FRED | 1 | 🔑 需 Key |
 
 **状态说明**:
-- ✅ 实时：数据源正常工作
-- ⚠️ 估算：使用历史均值 fallback
+- ✅ 示例：正常工作的示例数据源
+- ⚠️ 示例：使用 fallback 的示例
 - 🔑 需 Key：需要配置 API Key
 
+**你可以替换成**:
+- 股票价格 API
+- 体育比分 API
+- 交通数据 API
+- 电商价格 API
+- 任何你需要的数据源
+
 ## 自定义数据源
+
+聚合兽是**通用网关**，你可以添加任何数据源：
+
+### 示例 1：添加天气 API
 
 ```python
 from juheshou.core.aggregator import Aggregator, DataSource
 
 aggregator = Aggregator()
 
-# 注册自定义数据源
+# 注册天气数据源
 aggregator.register_source(DataSource(
     name="weather",
     url="https://api.openweathermap.org/data/2.5/weather",
@@ -201,6 +225,7 @@ aggregator.register_source(DataSource(
     parser=lambda r: {
         "temp": r.json()["main"]["temp"],
         "humidity": r.json()["main"]["humidity"],
+        "description": r.json()["weather"][0]["description"],
     },
 ))
 
@@ -208,22 +233,115 @@ aggregator.register_source(DataSource(
 result = await aggregator.fetch("weather")
 ```
 
+### 示例 2：添加股票价格
+
+```python
+# 注册股票数据源（主源 + 备用源）
+aggregator.register_source(DataSource(
+    name="aapl_stock",
+    url="https://api.polygon.io/v2/aggs/ticker/AAPL/prev",
+    method="GET",
+    headers={"Authorization": "Bearer YOUR_KEY"},
+    priority=1,
+    parser=lambda r: {
+        "price": r.json()["results"][0]["c"],
+        "change": r.json()["results"][0]["ch"],
+        "volume": r.json()["results"][0]["v"],
+    },
+))
+
+# 备用源（当主源失败时自动切换）
+aggregator.register_source(DataSource(
+    name="aapl_stock",
+    url="https://www.alphavantage.co/query",
+    method="GET",
+    params={"function": "GLOBAL_QUOTE", "symbol": "AAPL", "apikey": "YOUR_KEY"},
+    priority=2,
+    parser=lambda r: {
+        "price": float(r.json()["Global Quote"]["05. price"]),
+        "change": float(r.json()["Global Quote"]["09. change"]),
+    },
+))
+```
+
+### 示例 3：添加体育比分
+
+```python
+aggregator.register_source(DataSource(
+    name="nba_scores",
+    url="https://api.sportsdata.io/v3/nba/scores/json/GamesByDate",
+    method="GET",
+    headers={"Ocp-Apim-Subscription-Key": "YOUR_KEY"},
+    priority=1,
+    parser=lambda r: {
+        "games": [
+            {
+                "home": g["HomeTeam"],
+                "away": g["AwayTeam"],
+                "score": f"{g['HomeScore']} - {g['AwayScore']}"
+            }
+            for g in r.json()
+        ]
+    },
+))
+```
+
 ## 定价
 
 | 方案 | 价格 | 请求数/月 | 功能 |
 |------|------|-----------|------|
-| Free | $0 | 100/天 | 基础数据，延迟 5 分钟 |
-| Developer | $29 | 10,000/天 | 实时数据，99% SLA |
+| Free | $0 | 100/天 | 基础功能，适合个人项目 |
+| Developer | $29 | 10,000/天 | 全部功能，99% SLA |
 | Pro | $99 | 100,000/天 | 优先支持，99.9% SLA |
-| Enterprise | $499 | 无限 | 自定义数据源，专属支持 |
+| Enterprise | $499 | 无限 | 定制数据源，专属支持 |
 
-## 技术栈
+**注意**: 定价针对**聚合兽网关服务**，数据源的 API Key 需自行申请。
 
-- **后端**: FastAPI (Python 3.10+)
-- **HTTP 客户端**: httpx (异步)
-- **缓存**: 内存缓存 (TTL=60s，可扩展 Redis)
-- **部署**: Docker + Kubernetes
-- **测试**: pytest + asyncio
+## 技术架构
+
+```
+┌─────────────┐
+│   用户请求   │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│      聚合兽网关 (FastAPI)        │
+│  - API Key 认证                  │
+│  - 请求路由                      │
+│  - 缓存层 (TTL=60s)              │
+│  - 置信度评分                    │
+└──────┬──────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│      数据源管理层                │
+│  - 优先级队列                    │
+│  - 自动降级                      │
+│  - 健康检查                      │
+│  - 失败重试                      │
+└──────┬──────────────────────────┘
+       │
+       ├──────────┬──────────┬──────────┐
+       ▼          ▼          ▼          ▼
+   ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐
+   │ 源 1  │  │ 源 2  │  │ 源 3  │  │ ...  │
+   │优先级1│  │优先级2│  │优先级3│  │      │
+   └──────┘  └──────┘  └──────┘  └──────┘
+```
+
+**核心组件**:
+- **FastAPI**: 高性能异步 Web 框架
+- **httpx**: 异步 HTTP 客户端
+- **内存缓存**: 可替换为 Redis
+- **数据源插件**: 即插即用
+
+**技术栈**:
+- Python 3.10+
+- FastAPI
+- httpx (异步)
+- pytest (测试)
+- Docker (部署)
 
 ## 性能指标
 
@@ -252,7 +370,34 @@ result = await aggregator.fetch("weather")
 - ✅ 错误处理 (优雅失败)
 - ✅ USD 修复 (正常返回)
 
-## 贡献
+## 常见问题
+
+### Q: 聚合兽是数据提供商吗？
+**A**: 不是。聚合兽是**API 网关**，不生产数据，只负责聚合和转发。数据来自第三方 API（如 CoinGecko、OpenWeather 等）。
+
+### Q: 我需要自己申请 API Key 吗？
+**A**: 是的。聚合兽提供网关服务，数据源的 API Key 需自行申请。例如：
+- 天气数据 → 申请 OpenWeather API Key
+- 股票数据 → 申请 Polygon.io API Key
+- 新闻数据 → 申请 NewsAPI Key
+
+### Q: 为什么用聚合兽而不是直接调用 API？
+**A**: 
+- **自动降级**: 一个 API 挂了自动切另一个，服务不中断
+- **统一格式**: 不同 API 返回格式统一，不用写适配代码
+- **可信度评分**: 知道数据来自哪个源，可信度如何
+- **缓存优化**: 减少重复请求，降低 API 成本
+- **监控统计**: 知道每个 API 的成功率、延迟
+
+### Q: 可以添加私有 API 吗？
+**A**: 可以。聚合兽支持添加任何 HTTP API，包括内网服务、私有 API。
+
+### Q: 如何保证数据安全？
+**A**: 
+- API Key 本地存储，不上传
+- 支持 HTTPS
+- 可配置访问白名单
+- 可选日志脱敏
 
 欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md)
 
