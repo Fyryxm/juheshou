@@ -5,11 +5,13 @@
 
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
 import time
 import hashlib
+from pathlib import Path
 from .core.config import settings
 from .core.aggregator import Aggregator, DataSource
 from .core.presets import register_all_sources
@@ -375,3 +377,30 @@ async def health_check():
             "healthy": healthy_count,
         },
     }
+
+
+# ==================== 管理后台 ====================
+
+@app.get("/admin")
+async def admin_dashboard():
+    """管理后台"""
+    admin_path = Path(__file__).parent.parent / "admin" / "index.html"
+    if admin_path.exists():
+        return FileResponse(admin_path)
+    return {"error": "Admin dashboard not found"}
+
+
+@app.delete("/v1/keys/{key_hash}")
+async def revoke_api_key(
+    key_hash: str,
+    user: dict = Depends(verify_api_key),
+):
+    """吊销 API Key（需要 Master Key）"""
+    if user["key_hash"] != "master":
+        raise HTTPException(status_code=403, detail="需要 Master Key")
+    
+    success = key_manager.revoke_key(key_hash)
+    if not success:
+        raise HTTPException(status_code=404, detail="API Key 不存在")
+    
+    return {"success": True, "message": f"API Key {key_hash[:8]}... 已吊销"}
