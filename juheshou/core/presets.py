@@ -49,15 +49,40 @@ def parse_goldapi(response) -> Dict[str, Any]:
     }
 
 
+def parse_gold_fallback(response) -> Dict[str, Any]:
+    """金价 fallback（基于历史均值估算）"""
+    # 2024年金均价约 $2300-2600
+    # 返回估算值，标记为 fallback
+    return {
+        "price": 2650.0,
+        "change_24h": 0.5,
+        "fallback": True,
+        "source": "estimated",
+        "note": "Primary sources unavailable, using estimated value"
+    }
+
+
+def parse_silver_fallback(response) -> Dict[str, Any]:
+    """白银 fallback（基于历史均值估算）"""
+    # 2024年白银均价约 $28-32
+    return {
+        "price": 32.0,
+        "change_24h": 0.3,
+        "fallback": True,
+        "source": "estimated",
+        "note": "Primary sources unavailable, using estimated value"
+    }
+
+
 def parse_frankfurter_usd(response) -> Dict[str, Any]:
     """解析 Frankfurter 美元指数"""
     data = response.json()
     rates = data.get("rates", {})
     eur = rates.get("EUR", 0.92)
-    # 美元指数近似计算
-    dxy = 100 / eur
+    # 美元指数近似计算 (DXY ≈ 100/EUR)
+    dxy = round(100 / eur, 2) if eur > 0 else 110.0
     return {
-        "index": round(dxy, 2),
+        "index": dxy,
         "eur_rate": eur,
     }
 
@@ -65,11 +90,11 @@ def parse_frankfurter_usd(response) -> Dict[str, Any]:
 def parse_exchange_rate_usd(response) -> Dict[str, Any]:
     """解析 Exchange Rate API 美元指数"""
     data = response.json()
-    rates = data.get("conversion_rates", {})
-    eur = rates.get("EUR", 0.92)
-    dxy = 100 / eur
+    rates = data.get("rates", {})
+    eur = rates.get("EUR", 0.85)
+    dxy = round(100 / eur, 2) if eur > 0 else 110.0
     return {
-        "index": round(dxy, 2),
+        "index": dxy,
         "eur_rate": eur,
     }
 
@@ -119,6 +144,79 @@ def parse_fred(response) -> Dict[str, Any]:
     return {"value": None, "date": None}
 
 
+def parse_goldprice_org(response) -> Dict[str, Any]:
+    """解析 goldprice.org 网页金价"""
+    import re
+    text = response.text
+    
+    # 查找金价模式：$2,650.50 或 2650.50
+    patterns = [
+        r'\$([0-9,]+\.?\d*)\s*(?:USD|per|oz)',
+        r'Gold.*?([0-9,]+\.?\d*)\s*USD',
+        r'XAU.*?([0-9,]+\.?\d*)',
+        r'price[^0-9]*([0-9,]+\.?\d*)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            price_str = match.group(1).replace(',', '')
+            try:
+                return {"price": float(price_str)}
+            except ValueError:
+                continue
+    
+    # 备用：返回估算值（基于历史平均）
+    return {"price": 2650.0, "fallback": True}
+
+
+def parse_kitco_gold(response) -> Dict[str, Any]:
+    """解析 Kitco 金价"""
+    import re
+    text = response.text
+    
+    # Kitco 格式：Gold $2,650.30
+    patterns = [
+        r'Gold[^0-9]*\$?([0-9,]+\.?\d*)',
+        r'XAU[^0-9]*([0-9,]+\.?\d*)',
+        r'price[^0-9]*([0-9,]+\.\d{2})',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            price_str = match.group(1).replace(',', '')
+            try:
+                return {"price": float(price_str)}
+            except ValueError:
+                continue
+    
+    return {"price": 2650.0, "fallback": True}
+
+
+def parse_silverprice_org(response) -> Dict[str, Any]:
+    """解析白银价格"""
+    import re
+    text = response.text
+    
+    patterns = [
+        r'\$([0-9,]+\.?\d*)\s*(?:USD|per|oz)',
+        r'Silver[^0-9]*\$?([0-9,]+\.?\d*)',
+        r'XAG[^0-9]*([0-9,]+\.?\d*)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            price_str = match.group(1).replace(',', '')
+            try:
+                return {"price": float(price_str)}
+            except ValueError:
+                continue
+    
+    return {"price": 32.0, "fallback": True}
+
+
 # ==================== 数据源配置 ====================
 
 PRESET_SOURCES = {
@@ -150,6 +248,7 @@ PRESET_SOURCES = {
     
     # ========== 贵金属 ==========
     "gold": [
+        # 主源：metals.live（当前 SSL 问题，保留）
         DataSource(
             name="gold",
             url="https://api.metals.live/v1/spot/gold",
@@ -158,25 +257,35 @@ PRESET_SOURCES = {
             timeout=3,
             parser=parse_metals_gold,
         ),
-        # 备选源：GoldAPI.io (需要 API Key)
-        # DataSource(
-        #     name="gold",
-        #     url="https://www.goldapi.io/api/XAU/USD",
-        #     method="GET",
-        #     headers={"x-access-token": "YOUR_API_KEY"},
-        #     priority=2,
-        #     parser=parse_goldapi,
-        # ),
+        # Fallback：估算值（基于历史均值）
+        DataSource(
+            name="gold",
+            url="data:text/plain,{\"price\":2650,\"fallback\":true}",
+            method="GET",
+            priority=2,
+            timeout=1,
+            parser=parse_gold_fallback,
+        ),
     ],
     
     "silver": [
+        # 主源：metals.live（当前 SSL 问题，保留）
         DataSource(
             name="silver",
             url="https://api.metals.live/v1/spot/silver",
             method="GET",
             priority=1,
             timeout=3,
-            parser=parse_metals_gold,  # 同样的解析器
+            parser=parse_metals_gold,
+        ),
+        # Fallback：估算值（基于历史均值）
+        DataSource(
+            name="silver",
+            url="data:text/plain,{\"price\":32,\"fallback\":true}",
+            method="GET",
+            priority=2,
+            timeout=1,
+            parser=parse_silver_fallback,
         ),
     ],
     
@@ -184,19 +293,10 @@ PRESET_SOURCES = {
     "usd": [
         DataSource(
             name="usd",
-            url="https://api.frankfurter.app/latest",
+            url="https://api.exchangerate-api.com/v4/latest/USD",
             method="GET",
-            params={"from": "USD", "to": "EUR"},
             priority=1,
-            timeout=3,
-            parser=parse_frankfurter_usd,
-        ),
-        DataSource(
-            name="usd",
-            url="https://v6.exchangerate-api.com/v6/YOUR_API_KEY/latest/USD",
-            method="GET",
-            priority=2,
-            timeout=3,
+            timeout=5,
             parser=parse_exchange_rate_usd,
         ),
     ],

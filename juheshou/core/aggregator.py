@@ -150,6 +150,20 @@ class Aggregator:
         """从单个数据源获取数据"""
         start_time = time.time()
         
+        # 处理 data: URL (内置响应)
+        if source.url.startswith("data:"):
+            # 解析 data URL
+            import json
+            data_str = source.url.split(",", 1)[1]
+            result = json.loads(data_str)
+            
+            # 模拟延迟
+            latency_ms = 10
+            source.total_latency_ms += latency_ms
+            source.avg_latency_ms = source.total_latency_ms // max(1, source.success_count)
+            
+            return result
+        
         async with httpx.AsyncClient(timeout=source.timeout) as client:
             if source.method.upper() == "GET":
                 response = await client.get(
