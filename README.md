@@ -1,9 +1,10 @@
 # 聚合兽 🦾
 
-> 通用 API 聚合网关 - 一个 API Key，多个数据源，自动降级
+> 通用 API 聚合网关 - 一个 API Key，多个数据源，自动降级，**永久免费**
 
 [![GitHub](https://img.shields.io/github/license/Fyryxm/juheshou)](https://github.com/Fyryxm/juheshou)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![Free](https://img.shields.io/badge/pricing-FREE-green.svg)](https://github.com/Fyryxm/juheshou#定价)
 
 ## 简介
 
@@ -288,12 +289,19 @@ aggregator.register_source(DataSource(
 
 ## 定价
 
+### 🎉 当前免费开放！
+
+**所有功能免费使用**，适合个人开发者和小型项目。
+
 | 方案 | 价格 | 请求数/月 | 功能 |
 |------|------|-----------|------|
-| Free | $0 | 100/天 | 基础功能，适合个人项目 |
-| Developer | $29 | 10,000/天 | 全部功能，99% SLA |
-| Pro | $99 | 100,000/天 | 优先支持，99.9% SLA |
-| Enterprise | $499 | 无限 | 定制数据源，专属支持 |
+| Free | **$0 (永久免费)** | 1000/天 | 全部功能 |
+
+**说明**:
+- 聚合兽目前**完全免费**，所有功能开放
+- 保留 API Key 管理用于使用追踪和防滥用
+- 未来可能推出付费 tiers 支持持续开发
+- 欢迎通过 GitHub Sponsors 赞助支持
 
 **注意**: 定价针对**聚合兽网关服务**，数据源的 API Key 需自行申请。
 
